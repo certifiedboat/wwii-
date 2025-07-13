@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WWII Tank Game</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for the canvas and overall layout */
+        body {
+            font-family: 'Inter', sans-serif; /* Using Inter font */
+            background-color: #1a202c; /* Dark background */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: hidden; /* Prevent scrolling */
+        }
+        canvas {
+            background-color: #384034; /* Battlefield ground color */
+            border: 10px solid #5a3e2b; /* Border resembling a bunker/fortification */
+            border-radius: 15px; /* Rounded corners */
+            display: block;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5); /* Shadow for depth */
+            touch-action: none; /* Disable default touch actions like scrolling/zooming */
+            cursor: crosshair; /* Crosshair cursor for aiming */
+        }
+        #game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            padding: 20px;
+            background-color: #2d3748; /* Container background */
+            border-radius: 15px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.7);
+        }
+        #game-info {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            max-width: 800px;
+            color: #e2e8f0;
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+        #instructions {
+            color: #e2e8f0;
+            font-size: 1rem;
+            text-align: center;
+            margin-top: 10px;
+        }
+        /* Message box for game alerts */
+        .message-box {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #4a5568;
+            color: #e2e8f0;
+            padding: 20px 30px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            text-align: center;
+            display: none; /* Hidden by default */
+        }
+        .message-box button {
+            background-color: #e53e3e; /* Red for game over/restart */
+            color: white;
+            padding: 8px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 15px;
+            font-size: 1rem;
+            transition: background-color 0.2s;
+        }
+        .message-box button:hover {
+            background-color: #c53030;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container" class="flex flex-col items-center">
+        <h1 class="text-3xl font-bold text-white mb-4">WWII Tank Battle</h1>
+        <div id="game-info">
+            <div id="score">Score: 0</div>
+            <div id="health">Health: 100</div>
+        </div>
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="instructions" class="text-gray-200">
+            Use WASD or Arrow Keys to Move. Click to Shoot!
+        </div>
+        <button id="resetButton" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-lg transition duration-300 ease-in-out transform hover:scale-105">
+            Restart Game
+        </button>
+    </div>
+
+    <!-- Message Box HTML -->
+    <div id="messageBox" class="message-box">
+        <p id="messageText"></p>
+        <button id="messageBoxOkButton">Restart</button>
+    </div>
+
+    <script>
+        // Get the canvas element and its 2D rendering context
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Get game info elements
+        const scoreDisplay = document.getElementById('score');
+        const healthDisplay = document.getElementById('health');
+        const resetButton = document.getElementById('resetButton');
+
+        // Get message box elements
+        const messageBox = document.getElementById('messageBox');
+        const messageText = document.getElementById('messageText');
+        const messageBoxOkButton = document.getElementById('messageBoxOkButton');
+
+        // Game constants
+        const PLAYER_SPEED = 3;
+        const BULLET_SPEED = 7;
+        const ENEMY_SPEED = 1;
+        const PLAYER_SIZE = 30;
+        const ENEMY_SIZE = 30;
+        const BULLET_RADIUS = 4;
+        const MAX_HEALTH = 100;
+        const ENEMY_SPAWN_INTERVAL = 1500; // milliseconds
+        const ENEMY_FIRE_RATE = 2000; // milliseconds
+
+        // Game state variables
+        let player;
+        let bullets = [];
+        let enemies = [];
+        let enemyBullets = [];
+        let score = 0;
+        let health = MAX_HEALTH;
+        let gameOver = false;
+        let keys = {}; // To track pressed keys for smooth movement
+        let lastEnemySpawnTime = 0;
+        let lastPlayerShotTime = 0;
+        let playerFireRate = 300; // milliseconds
+
+        // Function to show a custom message box
+        function showMessageBox(message) {
+            messageText.textContent = message;
+            messageBox.style.display = 'block';
+        }
+
+        // Function to hide the custom message box
+        function hideMessageBox() {
+            messageBox.style.display = 'none';
+        }
+
+        // Event listener for the message box OK button
+        messageBoxOkButton.addEventListener('click', () => {
+            hideMessageBox();
+            initializeGame(); // Restart the game
+        });
+
+        // Player class
+        class Player {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = PLAYER_SIZE;
+                this.color = '#4CAF50'; // Green tank
+                this.turretAngle = 0; // Angle of the turret
+            }
+
+            draw() {
+                // Draw tank body
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
+
+                // Draw tank turret
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.turretAngle);
+                ctx.fillStyle = '#333'; // Dark gray turret
+                ctx.fillRect(-this.size / 4, -this.size / 4, this.size / 2, this.size / 2); // Turret base
+                ctx.fillRect(-this.size / 4, -this.size / 8, this.size, this.size / 4); // Cannon
+                ctx.restore();
+            }
+
+            update(mouseX, mouseY) {
+                // Update turret angle to face mouse
+                this.turretAngle = Math.atan2(mouseY - this.y, mouseX - this.x);
+
+                // Movement based on pressed keys
+                if (keys['w'] || keys['ArrowUp']) this.y -= PLAYER_SPEED;
+                if (keys['s'] || keys['ArrowDown']) this.y += PLAYER_SPEED;
+                if (keys['a'] || keys['ArrowLeft']) this.x -= PLAYER_SPEED;
+                if (keys['d'] || keys['ArrowRight']) this.x += PLAYER_SPEED;
+
+                // Keep player within canvas bounds
+                this.x = Math.max(this.size / 2, Math.min(canvas.width - this.size / 2, this.x));
+                this.y = Math.max(this.size / 2, Math.min(canvas.height - this.size / 2, this.y));
+            }
+
+            shoot() {
+                const currentTime = Date.now();
+                if (currentTime - lastPlayerShotTime > playerFireRate) {
+                    const bulletDx = BULLET_SPEED * Math.cos(this.turretAngle);
+                    const bulletDy = BULLET_SPEED * Math.sin(this.turretAngle);
+                    bullets.push(new Bullet(this.x, this.y, bulletDx, bulletDy, 'yellow'));
+                    lastPlayerShotTime = currentTime;
+                }
+            }
+        }
+
+        // Enemy class
+        class Enemy {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = ENEMY_SIZE;
+                this.color = '#B71C1C'; // Red tank
+                this.health = 30; // Enemy health
+                this.turretAngle = 0;
+                this.lastShotTime = Date.now();
+            }
+
+            draw() {
+                // Draw tank body
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
+
+                // Draw tank turret
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.turretAngle);
+                ctx.fillStyle = '#555'; // Darker gray turret
+                ctx.fillRect(-this.size / 4, -this.size / 4, this.size / 2, this.size / 2); // Turret base
+                ctx.fillRect(-this.size / 4, -this.size / 8, this.size, this.size / 4); // Cannon
+                ctx.restore();
+            }
+
+            update() {
+                // Move towards the player
+                const angleToPlayer = Math.atan2(player.y - this.y, player.x - this.x);
+                this.x += ENEMY_SPEED * Math.cos(angleToPlayer);
+                this.y += ENEMY_SPEED * Math.sin(angleToPlayer);
+
+                // Update turret angle to face player
+                this.turretAngle = angleToPlayer;
+
+                // Enemy shooting
+                const currentTime = Date.now();
+                if (currentTime - this.lastShotTime > ENEMY_FIRE_RATE) {
+                    this.shoot();
+                    this.lastShotTime = currentTime;
+                }
+            }
+
+            shoot() {
+                const bulletDx = BULLET_SPEED * 0.7 * Math.cos(this.turretAngle); // Slightly slower enemy bullets
+                const bulletDy = BULLET_SPEED * 0.7 * Math.sin(this.turretAngle);
+                enemyBullets.push(new Bullet(this.x, this.y, bulletDx, bulletDy, 'orange'));
+            }
+        }
+
+        // Bullet class
+        class Bullet {
+            constructor(x, y, dx, dy, color) {
+                this.x = x;
+                this.y = y;
+                this.dx = dx;
+                this.dy = dy;
+                this.radius = BULLET_RADIUS;
+                this.color = color;
+                this.active = true; // To mark if bullet is still in play
+            }
+
+            draw() {
+                if (!this.active) return;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.closePath();
+            }
+
+            update() {
+                if (!this.active) return;
+                this.x += this.dx;
+                this.y += this.dy;
+
+                // Deactivate if out of bounds
+                if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
+                    this.active = false;
+                }
+            }
+        }
+
+        // Collision detection (AABB - Axis-Aligned Bounding Box for simplicity)
+        function checkCollision(obj1, obj2) {
+            return obj1.x < obj2.x + obj2.size &&
+                   obj1.x + obj1.size > obj2.x &&
+                   obj1.y < obj2.y + obj2.size &&
+                   obj1.y + obj1.size > obj2.y;
+        }
+
+        // Collision detection for circle (bullet) and rectangle (tank)
+        function checkBulletTankCollision(bullet, tank) {
+            // Find the closest point on the tank to the center of the bullet
+            let testX = bullet.x;
+            let testY = bullet.y;
+
+            if (bullet.x < tank.x - tank.size / 2) testX = tank.x - tank.size / 2;
+            else if (bullet.x > tank.x + tank.size / 2) testX = tank.x + tank.size / 2;
+            if (bullet.y < tank.y - tank.size / 2) testY = tank.y - tank.size / 2;
+            else if (bullet.y > tank.y + tank.size / 2) testY = tank.y + tank.size / 2;
+
+            // Calculate the distance between the closest point and the bullet's center
+            let distX = bullet.x - testX;
+            let distY = bullet.y - testY;
+            let distance = Math.sqrt((distX * distX) + (distY * distY));
+
+            // If the distance is less than the bullet's radius, there's a collision
+            return distance <= bullet.radius;
+        }
+
+        // Initialize game
+        function initializeGame() {
+            player = new Player(canvas.width / 2, canvas.height / 2);
+            bullets = [];
+            enemies = [];
+            enemyBullets = [];
+            score = 0;
+            health = MAX_HEALTH;
+            gameOver = false;
+            lastEnemySpawnTime = Date.now();
+            lastPlayerShotTime = Date.now();
+            updateGameInfo();
+            hideMessageBox(); // Ensure message box is hidden on restart
+        }
+
+        // Update score and health display
+        function updateGameInfo() {
+            scoreDisplay.textContent = `Score: ${score}`;
+            healthDisplay.textContent = `Health: ${health}`;
+            if (health <= 0 && !gameOver) {
+                gameOver = true;
+                showMessageBox(`Game Over! You scored ${score} points.`);
+            }
+        }
+
+        // Game loop
+        function animate() {
+            if (gameOver) return; // Stop animation if game is over
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas
+
+            // Spawn enemies
+            const currentTime = Date.now();
+            if (currentTime - lastEnemySpawnTime > ENEMY_SPAWN_INTERVAL) {
+                // Spawn enemy at a random edge of the canvas
+                let spawnX, spawnY;
+                const edge = Math.floor(Math.random() * 4); // 0:top, 1:right, 2:bottom, 3:left
+                if (edge === 0) { // Top
+                    spawnX = Math.random() * canvas.width;
+                    spawnY = 0;
+                } else if (edge === 1) { // Right
+                    spawnX = canvas.width;
+                    spawnY = Math.random() * canvas.height;
+                } else if (edge === 2) { // Bottom
+                    spawnX = Math.random() * canvas.width;
+                    spawnY = canvas.height;
+                } else { // Left
+                    spawnX = 0;
+                    spawnY = Math.random() * canvas.height;
+                }
+                enemies.push(new Enemy(spawnX, spawnY));
+                lastEnemySpawnTime = currentTime;
+            }
+
+            // Update and draw player
+            player.update(mouseX, mouseY);
+            player.draw();
+
+            // Update and draw bullets
+            bullets.forEach(bullet => {
+                bullet.update();
+                bullet.draw();
+            });
+            bullets = bullets.filter(bullet => bullet.active); // Remove inactive bullets
+
+            // Update and draw enemy bullets
+            enemyBullets.forEach(bullet => {
+                bullet.update();
+                bullet.draw();
+            });
+            enemyBullets = enemyBullets.filter(bullet => bullet.active); // Remove inactive enemy bullets
+
+            // Update and draw enemies
+            enemies.forEach(enemy => {
+                enemy.update();
+                enemy.draw();
+            });
+
+            // Collision detection: Player bullets vs. Enemies
+            bullets.forEach(bullet => {
+                enemies.forEach(enemy => {
+                    if (bullet.active && checkBulletTankCollision(bullet, enemy)) {
+                        bullet.active = false; // Deactivate bullet
+                        enemy.health -= 10; // Reduce enemy health
+                        if (enemy.health <= 0) {
+                            enemies = enemies.filter(e => e !== enemy); // Remove enemy
+                            score += 10; // Increase score
+                            updateGameInfo();
+                        }
+                    }
+                });
+            });
+
+            // Collision detection: Enemy bullets vs. Player
+            enemyBullets.forEach(bullet => {
+                if (bullet.active && checkBulletTankCollision(bullet, player)) {
+                    bullet.active = false; // Deactivate bullet
+                    health -= 5; // Reduce player health
+                    updateGameInfo();
+                }
+            });
+
+            // Request next animation frame
+            requestAnimationFrame(animate);
+        }
+
+        // Mouse position tracking for player aiming
+        let mouseX = 0;
+        let mouseY = 0;
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener('click', () => {
+            if (!gameOver) {
+                player.shoot();
+            }
+        });
+
+        // Keyboard input for player movement
+        document.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+        });
+
+        // Touch input for movement and shooting (simplified)
+        // For a more robust touch control, a virtual joystick or tap-to-move would be needed.
+        // This simple implementation allows tapping to shoot and dragging to move.
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchMoving = false;
+
+        canvas.addEventListener('touchstart', (e) => {
+            if (gameOver) return;
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            touchStartX = touch.clientX - rect.left;
+            touchStartY = touch.clientY - rect.top;
+            touchMoving = false; // Assume not moving initially
+            e.preventDefault(); // Prevent scrolling
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (gameOver) return;
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const currentTouchX = touch.clientX - rect.left;
+            const currentTouchY = touch.clientY - rect.top;
+
+            // Simple drag to move: calculate direction and set keys
+            const deltaX = currentTouchX - touchStartX;
+            const deltaY = currentTouchY - touchStartY;
+            const threshold = 10; // Minimum drag distance to consider it a move
+
+            keys['w'] = keys['s'] = keys['a'] = keys['d'] = false; // Reset keys
+
+            if (Math.abs(deltaX) > threshold || Math.abs(deltaY) > threshold) {
+                touchMoving = true;
+                // Determine dominant direction
+                if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                    if (deltaX > 0) keys['d'] = true;
+                    else keys['a'] = true;
+                } else {
+                    if (deltaY > 0) keys['s'] = true;
+                    else keys['w'] = true;
+                }
+            } else {
+                touchMoving = false;
+            }
+
+            // Update mouseX, mouseY for turret aiming
+            mouseX = currentTouchX;
+            mouseY = currentTouchY;
+
+            e.preventDefault();
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            if (gameOver) return;
+            if (!touchMoving) { // If it was a tap, not a drag
+                player.shoot();
+            }
+            keys['w'] = keys['s'] = keys['a'] = keys['d'] = false; // Stop movement
+            touchMoving = false;
+            e.preventDefault();
+        }, { passive: false });
+
+
+        // Reset button functionality
+        resetButton.addEventListener('click', () => {
+            initializeGame();
+        });
+
+        // Initialize and start the game when the window loads
+        window.onload = function() {
+            initializeGame();
+            animate();
+        };
+    </script>
+</body>
+</html>
